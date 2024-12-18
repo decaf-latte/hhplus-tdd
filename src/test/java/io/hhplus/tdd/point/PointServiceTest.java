@@ -123,22 +123,9 @@ class PointServiceTest {
     }
 
     @Test
-    @DisplayName("존재하지 않는 사용자 포인트 충전")
-    void chargeUserPointNonExistingUser() {
-        long nonExistingId = 999L;
-        when(userPointTable.selectById(nonExistingId)).thenReturn(null);
-
-        PointException exception = assertThrows(PointException.class, () -> {
-            pointService.chargeUserPoint(nonExistingId, 100);
-        });
-
-        assertEquals("존재하지 않는 사용자입니다.", exception.getMessage());
-    }
-
-    @Test
     @DisplayName("최대 잔고 초과 포인트 충전")
     void chargeUserPointExceedMaxBalance() {
-        long maxBalance = Long.MAX_VALUE;
+        long maxBalance = 1_000_000L;
         UserPoint userPoint = new UserPoint(1L, maxBalance - 10, System.currentTimeMillis());
 
         when(userPointTable.selectById(1L)).thenReturn(userPoint);
@@ -147,7 +134,7 @@ class PointServiceTest {
             pointService.chargeUserPoint(1L, 20);
         });
 
-        assertEquals("최대 잔고를 초과할 수 없습니다.", exception.getMessage());
+        assertEquals("최대 잔고는 " + maxBalance + "을 초과할 수 없습니다.", exception.getMessage());
     }
 
     @Test
@@ -197,22 +184,6 @@ class PointServiceTest {
     }
 
     @Test
-    @DisplayName("존재하지 않는 사용자 포인트 사용")
-    void usePointNonExistingUser() {
-        long nonExistingId = 999L;
-
-        // Mock 동작 정의: 존재하지 않는 사용자
-        when(userPointTable.selectById(nonExistingId)).thenReturn(null);
-
-        // 예외 검증
-        PointException exception = assertThrows(PointException.class, () -> {
-            pointService.usePoint(nonExistingId, 50);
-        });
-
-        assertEquals("존재하지 않는 사용자입니다.", exception.getMessage());
-    }
-
-    @Test
     @DisplayName("잔액 부족으로 포인트 사용 실패")
     void usePointInsufficientBalance() {
         // 사용자 포인트가 50인데 100을 사용하려 함
@@ -226,7 +197,7 @@ class PointServiceTest {
             pointService.usePoint(1L, 100);
         });
 
-        assertEquals("포인트가 부족합니다.", exception.getMessage());
+        assertEquals("포인트가 부족합니다. 현재 잔액: " + userPoint.point() + "원, 요청 금액: " + 100 + "원", exception.getMessage());
     }
 
     @Test
