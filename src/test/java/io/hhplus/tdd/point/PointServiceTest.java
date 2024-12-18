@@ -14,6 +14,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -211,5 +215,95 @@ class PointServiceTest {
         });
 
         assertEquals("사용 금액은 0보다 커야 합니다.", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("고객별 동시성 처리 테스트")
+    void testCustomerConcurrency() throws InterruptedException {
+        // Mock 객체 생성
+        UserPointTable userPointTable = mock(UserPointTable.class);
+        PointHistoryTable pointHistoryTable = mock(PointHistoryTable.class);
+
+        // Mock 상태를 유지하기 위한 데이터
+        // ConcurrentHashMap은 스레드 안전성을 보장하며, 테스트 중 상태를 동기화
+        ConcurrentHashMap<Long, UserPoint> userPoints = new ConcurrentHashMap<>();
+        userPoints.put(1L, new UserPoint(1L, 500, System.currentTimeMillis()));
+        userPoints.put(2L, new UserPoint(2L, 1000, System.currentTimeMillis()));
+
+        // Mock 동작 정의
+        when(userPointTable.selectById(anyLong())).thenAnswer(invocation -> {
+            long userId = invocation.getArgument(0);
+            return userPoints.get(userId);
+        });
+
+        doAnswer(invocation -> {
+            long userId = invocation.getArgument(0);
+            long updatedAmount = invocation.getArgument(1);
+            userPoints.put(userId, new UserPoint(userId, updatedAmount, System.currentTimeMillis()));
+            return null;
+        }).when(userPointTable).insertOrUpdate(anyLong(), anyLong());
+
+        // PointService 인스턴스 생성: Mock 객체 주입
+        PointService pointService = new PointService(pointHistoryTable, userPointTable);
+
+        // 스레드 풀 생성: 병렬 작업을 처리하기 위해 4개의 스레드 사용
+        ExecutorService executorService = Executors.newFixedThreadPool(4);
+
+        // 병렬 작업 실행: 고객 1과 고객 2의 충전 및 사용 요청
+        executorService.submit(() -> pointService.chargeUserPoint(1L, 300)); // 500 + 300 = 800
+        executorService.submit(() -> pointService.usePoint(1L, 100));       // 800 - 100 = 700
+        executorService.submit(() -> pointService.chargeUserPoint(2L, 200)); // 1000 + 200 = 1200
+        executorService.submit(() -> pointService.usePoint(2L, 400));       // 1200 - 400 = 800
+
+        // 스레드 종료 및 대기
+        // 모든 작업이 5초 내에 완료되었는지 검증
+        executorService.shutdown();
+        assertTrue(executorService.awaitTermination(5, TimeUnit.SECONDS));
+
+        // 결과 검증
+        // 고객 1의 최종 잔액 = 700, 고객 2의 최종 잔액 = 800
+        assertEquals(700, userPoints.get(1L).point()); // 고객 1 최종 잔액
+        assertEquals(800, userPoints.get(2L).point()); // 고객 2 최종 잔액
+    }
+
+    @Test
+    @DisplayName("동시에 동일 고객 요청 처리 시 충돌 방지 테스트")
+    void testSameCustomerConcurrency() throws InterruptedException {
+        // Mock 객체 생성
+        UserPointTable userPointTable = mock(UserPointTable.class);
+        PointHistoryTable pointHistoryTable = mock(PointHistoryTable.class);
+
+        // Mock 상태 관리: ConcurrentHashMap을 이용하여 스레드 안전하게 고객 상태 관리
+        ConcurrentHashMap<Long, UserPoint> userPoints = new ConcurrentHashMap<>();
+        userPoints.put(1L, new UserPoint(1L, 1000, System.currentTimeMillis()));
+
+        // Mock 동작 정의
+        when(userPointTable.selectById(anyLong())).thenAnswer(invocation -> {
+            long userId = invocation.getArgument(0);
+            return userPoints.get(userId);
+        });
+
+        doAnswer(invocation -> {
+            long userId = invocation.getArgument(0);
+            long updatedAmount = invocation.getArgument(1);
+            userPoints.put(userId, new UserPoint(userId, updatedAmount, System.currentTimeMillis()));
+            return null;
+        }).when(userPointTable).insertOrUpdate(anyLong(), anyLong());
+
+        PointService pointService = new PointService(pointHistoryTable, userPointTable);
+
+        // 스레드 풀 생성: 병렬 작업을 처리하기 위해 2개의 스레드 사용
+        ExecutorService executorService = Executors.newFixedThreadPool(2);
+
+        // 병렬 작업 실행: 동일 고객에 대한 충전 및 사용 요청
+        executorService.submit(() -> pointService.chargeUserPoint(1L, 500)); // 1000 + 500
+        executorService.submit(() -> pointService.usePoint(1L, 300));       // 1500 - 300
+
+        // 스레드 종료 및 대기
+        executorService.shutdown();
+        assertTrue(executorService.awaitTermination(5, TimeUnit.SECONDS));
+
+        // 최종 상태 검증: 고객 1의 잔액이 동시성 제어로 인해 올바르게 계산되었는지 확인
+        assertEquals(1200, userPoints.get(1L).point()); // 고객 1 최종 잔액 = 1200
     }
 }
