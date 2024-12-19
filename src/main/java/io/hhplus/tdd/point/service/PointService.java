@@ -30,8 +30,8 @@ public class PointService {
     private final ConcurrentHashMap<Long, Lock> lockMap = new ConcurrentHashMap<>();
 
     // 특정 고객의 락을 가져오거나 새로 생성
-    private Lock getLockForCustomer(long customerId) {
-        return lockMap.computeIfAbsent(customerId, id -> new ReentrantLock());
+    private Lock getLockForCustomer(long userId) {
+        return lockMap.computeIfAbsent(userId, id -> new ReentrantLock());
     }
 
     //특정 유저의 포인트를 조회하는 기능
@@ -40,8 +40,8 @@ public class PointService {
     }
 
     //특정 유저의 포인트 충전/이용 내역을 조회하는 기능
-    public List<PointHistory> getPointHistoryByUserId(long id) {
-        List<PointHistory> histories = pointHistoryTable.selectAllByUserId(id);
+    public List<PointHistory> getPointHistoryByUserId(long userId) {
+        List<PointHistory> histories = pointHistoryTable.selectAllByUserId(userId);
 
         if (histories.isEmpty()) {
             throw new PointException(HttpStatus.NOT_FOUND, "포인트 내역이 존재하지 않습니다.");
@@ -51,9 +51,9 @@ public class PointService {
     }
 
     //특정 유저의 포인트를 충전하는 기능
-    public UserPoint chargeUserPoint(long id, long amount) {
+    public UserPoint chargeUserPoint(long userId, long amount) {
 
-        Lock lock = getLockForCustomer(id); // 고객별 락 가져오기
+        Lock lock = getLockForCustomer(userId); // 고객별 락 가져오기
         lock.lock();
 
         try {
@@ -62,7 +62,7 @@ public class PointService {
                 throw new PointException(HttpStatus.BAD_REQUEST, "충전 금액은 0보다 커야 합니다.");
             }
 
-            UserPoint userPoint = userPointTable.selectById(id);
+            UserPoint userPoint = userPointTable.selectById(userId);
             long updatedPoint = userPoint.point() + amount;
 
             // 최대 잔고 초과 예외 처리
@@ -71,9 +71,9 @@ public class PointService {
             }
 
             // 포인트 히스토리 추가
-            pointHistoryTable.insert(id, amount, TransactionType.CHARGE, System.currentTimeMillis());
+            pointHistoryTable.insert(userId, amount, TransactionType.CHARGE, System.currentTimeMillis());
 
-            return userPointTable.insertOrUpdate(id, updatedPoint);
+            return userPointTable.insertOrUpdate(userId, updatedPoint);
         } finally {
             //락 해제
             lock.unlock();
@@ -82,9 +82,9 @@ public class PointService {
     }
 
     //특정 유저의 포인트를 사용하는 기능을 작성
-    public UserPoint usePoint(long id, long amount) {
+    public UserPoint usePoint(long userId, long amount) {
 
-        Lock lock = getLockForCustomer(id); // 고객별 락 가져오기
+        Lock lock = getLockForCustomer(userId); // 고객별 락 가져오기
         lock.lock();
 
         try {
@@ -93,7 +93,7 @@ public class PointService {
                 throw new PointException(HttpStatus.BAD_REQUEST, "사용 금액은 0보다 커야 합니다.");
             }
 
-            UserPoint userPoint = userPointTable.selectById(id);
+            UserPoint userPoint = userPointTable.selectById(userId);
 
             //포인트 잔고부족 예외처리
             if (userPoint.point() < amount) {
@@ -103,10 +103,10 @@ public class PointService {
             }
 
             // 포인트 히스토리 추가
-            pointHistoryTable.insert(id, amount, TransactionType.USE, System.currentTimeMillis());
+            pointHistoryTable.insert(userId, amount, TransactionType.USE, System.currentTimeMillis());
 
             long updatedPoint = userPoint.point() - amount;
-            return userPointTable.insertOrUpdate(id, updatedPoint);
+            return userPointTable.insertOrUpdate(userId, updatedPoint);
         } finally {
             //락 해제
             lock.unlock();
